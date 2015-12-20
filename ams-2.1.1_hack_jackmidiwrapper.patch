@@ -1,0 +1,963 @@
+diff --git a/src/m_midiout.cpp b/src/m_midiout.cpp
+index 4b505ea..aa1fef1 100644
+--- a/src/m_midiout.cpp
++++ b/src/m_midiout.cpp
+@@ -70,15 +70,62 @@ M_midiout::M_midiout(QWidget* parent, int id)
+       lastmididata[l2][l1] = 0;
+     }
+   }
++  if (synthdata->withJackMidi)
++    sendEvent = &M_midiout::sendEventJack;
++  else
++    sendEvent = &M_midiout::sendEventAlsa;
+ }
+ 
+ M_midiout::~M_midiout()
+ {
+ }
+ 
++bool M_midiout::sendEventAlsa(snd_seq_event_t *ev, unsigned int portidx)
++{
++  snd_seq_ev_set_source(ev, synthdata->midi_out_port[portidx]);
++  if (snd_seq_event_output_direct(synthdata->seq_handle, ev) < 0)
++    return false;
++  return true;
++}
++
++#include <jack/midiport.h>
++bool M_midiout::sendEventJack(snd_seq_event_t *snd_ev, unsigned int portidx)
++{
++  jack_midi_data_t mididata[3];
++  bool             ret = false;
++  void             *port_buffer = NULL;
++
++  bzero(mididata, 3 * sizeof(jack_midi_data_t));
++  switch (snd_ev->type) {
++    case SND_SEQ_EVENT_NOTEON:
++    case SND_SEQ_EVENT_NOTEOFF:
++    case SND_SEQ_EVENT_KEYPRESS:
++      mididata[0] = (snd_ev->type << 4) + (snd_ev->data.note.channel & 0xF);
++      mididata[1] = snd_ev->data.note.note & 0xFF;
++      mididata[2] = snd_ev->data.note.velocity & 0xFF;
++      ret = true;
++      break;
++    case SND_SEQ_EVENT_CONTROLLER:
++    case SND_SEQ_EVENT_PGMCHANGE:
++    case SND_SEQ_EVENT_CHANPRESS:
++    case SND_SEQ_EVENT_PITCHBEND:
++      mididata[0] = (snd_ev->type << 4) + (snd_ev->data.control.channel & 0xF);
++      mididata[1] = snd_ev->data.control.param & 0xFF;
++      mididata[2] = snd_ev->data.control.value & 0xFF;
++      ret = true;
++      break;
++  }
++
++  port_buffer = jack_port_get_buffer(synthdata->jackmidi_out[portidx], synthdata->cyclesize);
++  if (jack_midi_event_write(port_buffer, 0, mididata, 3) != 0)
++    ret = false;
++  return ret;
++}
++
+ void M_midiout::generateCycle()
+ {
+-  if (!synthdata->seq_handle)
++  if (synthdata->withJackMidi == false &&
++      !synthdata->seq_handle)
+     return;
+ 
+   int l1, l3, mididata, velocitydata;
+@@ -109,7 +156,7 @@ void M_midiout::generateCycle()
+                   triggeredNote[l1][l3] = 0;
+                   lastmididata[l1][l3] = mididata;
+                   snd_seq_ev_set_source(&ev, synthdata->midi_out_port[l1]);
+-                  snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                  (*this.*sendEvent)(&ev, l1);
+                 }
+               }
+             }
+@@ -134,7 +181,7 @@ void M_midiout::generateCycle()
+                   ev.data.control.value = mididata;
+                   triggeredNote[l1][l3] = 0;
+                   snd_seq_ev_set_source(&ev, synthdata->midi_out_port[l1]);
+-                  snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                  (*this.*sendEvent)(&ev, l1);
+                 }
+               }
+             } else {
+@@ -177,7 +224,7 @@ void M_midiout::generateCycle()
+                   triggeredNote[l1][l3] = 0;
+                   lastmididata[l1][l3] = mididata;
+                   snd_seq_ev_set_source(&ev, synthdata->midi_out_port[l1]);
+-                  snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                  (*this.*sendEvent)(&ev, l1);
+                 }
+               }
+             }
+@@ -210,7 +257,7 @@ void M_midiout::generateCycle()
+                   ev.data.control.value = mididata;
+                   triggeredNote[l1][l3] = 0;
+                   snd_seq_ev_set_source(&ev, synthdata->midi_out_port[l1]);
+-                  snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                  (*this.*sendEvent)(&ev, l1);
+                 }
+               }
+             } else {
+@@ -242,7 +289,7 @@ void M_midiout::generateCycle()
+                   ev.data.note.velocity = 127;
+                   triggeredNote[l1][l3] = mididata;
+                   snd_seq_ev_set_source(&ev, synthdata->midi_out_port[l1]);
+-                  snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                  (*this.*sendEvent)(&ev, l1);
+                 }
+               }
+             } else {
+@@ -258,7 +305,7 @@ void M_midiout::generateCycle()
+                     ev.data.note.velocity = 0;
+                     ev.data.note.note = triggeredNote[l1][l3];
+                     snd_seq_ev_set_source(&ev, synthdata->midi_out_port[l1]);
+-                    snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                    (*this.*sendEvent)(&ev, l1);
+                   }
+                 }
+               }
+@@ -282,7 +329,7 @@ void M_midiout::generateCycle()
+                   ev.data.note.note = triggeredNote[l1][l3];
+                   ev.data.note.velocity = 0;
+                   snd_seq_ev_set_source(&ev, synthdata->midi_out_port[l1]);
+-                  snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                  (*this.*sendEvent)(&ev, l1);
+                   snd_seq_ev_clear(&ev);
+                   snd_seq_ev_set_subs(&ev);
+                   snd_seq_ev_set_direct(&ev);
+@@ -293,7 +340,7 @@ void M_midiout::generateCycle()
+                   triggeredNote[l1][l3] = mididata;
+                   lastmididata[l1][l3] = mididata;
+                   snd_seq_ev_set_source(&ev, synthdata->midi_out_port[l1]);
+-                  snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                  (*this.*sendEvent)(&ev, l1);
+                 }
+               }
+             }
+@@ -323,7 +370,7 @@ void M_midiout::generateCycle()
+                 ev.data.note.velocity = velocitydata;
+                 triggeredNote[0][l3] = mididata;
+                 snd_seq_ev_set_source(&ev, synthdata->midi_out_port[0]);
+-                snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                (*this.*sendEvent)(&ev, l1);
+               }
+             } else {
+               if (trigger[l3] && (triggerData[l3][l2] < triggerLevel)) {
+@@ -337,7 +384,7 @@ void M_midiout::generateCycle()
+                   ev.data.note.velocity = 0;
+                   ev.data.note.note = triggeredNote[0][l3];
+                   snd_seq_ev_set_source(&ev, synthdata->midi_out_port[0]);
+-                  snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                  (*this.*sendEvent)(&ev, l1);
+                 }
+               }
+             }
+@@ -359,7 +406,7 @@ void M_midiout::generateCycle()
+                 ev.data.note.note = triggeredNote[0][l3];
+                 ev.data.note.velocity = 0;
+                 snd_seq_ev_set_source(&ev, synthdata->midi_out_port[0]);
+-                snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                (*this.*sendEvent)(&ev, l1);
+                 snd_seq_ev_clear(&ev);
+                 snd_seq_ev_set_subs(&ev);
+                 snd_seq_ev_set_direct(&ev);
+@@ -374,7 +421,7 @@ void M_midiout::generateCycle()
+                 lastmididata[0][l3] = mididata;
+                 lastmididata[1][l3] = velocitydata;
+                 snd_seq_ev_set_source(&ev, synthdata->midi_out_port[0]);
+-                snd_seq_event_output_direct(synthdata->seq_handle, &ev);
++                (*this.*sendEvent)(&ev, l1);
+               }
+             }
+           }
+diff --git a/src/m_midiout.h b/src/m_midiout.h
+index aeb29eb..3f6c519 100644
+--- a/src/m_midiout.h
++++ b/src/m_midiout.h
+@@ -15,6 +15,9 @@ class M_midiout : public Module
+     Port *port_in[2], *port_M_trigger;
+     PolyArr<bool> trigger;    
+     int triggeredNote[2][MAXPOLY], lastmididata[2][MAXPOLY];
++    bool sendEventAlsa(snd_seq_event_t *ev, unsigned int portidx);
++    bool sendEventJack(snd_seq_event_t *ev, unsigned int portidx);
++    bool (M_midiout::*sendEvent)(snd_seq_event_t *ev, unsigned int portidx);
+     
+   public: 
+     float **inData[2], **triggerData;
+diff --git a/src/main.cpp b/src/main.cpp
+index d485efc..8bdac10 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -43,6 +43,7 @@ static struct option options[] = {
+          {"verbose", 0, 0, 'v'},
+          {"version", 0, 0, 'V'},
+          {"name", 1, 0, 'N'},
++         {"jackmidi", 0, 0, 'j'},
+          {0, 0, 0, 0}};
+ 
+ 
+@@ -152,6 +153,7 @@ int main(int argc, char *argv[])
+   msoptions.havePresetPath = false;
+   msoptions.forceJack = false;
+   msoptions.forceAlsa = false;
++  msoptions.forceJackMidi = false;
+   msoptions.verbose = 0;
+ #ifdef JACK_SESSION
+   msoptions.global_jack_session_uuid = "";
+@@ -171,7 +173,6 @@ int main(int argc, char *argv[])
+                   , options, &option_index)) >= 0) {
+     switch(getopt_return) {
+     case 'J':
+-    case 'j':
+         msoptions.forceJack = true;
+         msoptions.forceAlsa = false;
+         break;
+@@ -259,9 +260,13 @@ int main(int argc, char *argv[])
+         printf("  -h, --help                    Show this message\n");
+         printf("  -v, --verbose 		verbose warning messages\n");
+         printf("  -V, --version			Display program version information\n");
+-        printf("  -N, --name <name>             ALSA/JACK clientname, windowtitle\n\n");
++        printf("  -N, --name <name>             ALSA/JACK clientname, windowtitle\n");
++        printf("  -j, --jackmidi                Jack midi backend\n\n");
+         exit(EXIT_SUCCESS);
+         break;
++    case 'j':
++        msoptions.forceJackMidi = true;
++        break;
+     }
+   }
+ 
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index 8955e1d..9ba4245 100644
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -340,7 +340,7 @@ MainWindow::MainWindow(const ModularSynthOptions& mso)
+                     .toUtf8().constData());
+         modularSynth->setPatchPath(mso.presetPath);
+     }
+-    modularSynth->go(mso.forceJack, mso.forceAlsa);
++    modularSynth->go(mso.forceJack, mso.forceAlsa, mso.forceJackMidi);
+ 
+ #ifdef NSM_SUPPORT
+     const char *nsm_url = getenv("NSM_URL");
+@@ -975,7 +975,7 @@ int MainWindow::nsm_open(const char *name, const char *display_name,
+ 
+     synthdata->closeJack();
+     synthdata->name = client_id;
+-    synthdata->initJack(synthoptions->ncapt, synthoptions->nplay);
++    synthdata->initJack(synthoptions->ncapt, synthoptions->nplay, false);
+ 
+     configFile.append(".ams");
+     nsmOpenFile(configFile);
+diff --git a/src/modularsynth.cpp b/src/modularsynth.cpp
+index a1b1387..979ff89 100644
+--- a/src/modularsynth.cpp
++++ b/src/modularsynth.cpp
+@@ -327,27 +327,39 @@ void ModularSynth::mouseReleaseEvent(QMouseEvent *ev)
+     }
+ }
+ 
+-int ModularSynth::go(bool forceJack, bool forceAlsa)
++int ModularSynth::go(bool forceJack, bool forceAlsa, bool forceJackMidi)
+ {
++  int err = -1;
++
++  if (forceJackMidi) {
++    err = synthdata->initJack(ncapt, nplay, true);
++    if (err < 0)
++      exit(err);
++    initSeqNotifier();
++    midiWidget->setActiveMidiControllers();
++
++    startSynth();
++  } else {
++
+     if ((synthdata->seq_handle = open_seq()))
+-        initSeqNotifier();
++      initSeqNotifier();
+     else
+-        qWarning("%s", QObject::tr("Alsa MIDI wont work!").toUtf8().constData());
++      qWarning("%s", QObject::tr("Alsa MIDI wont work!").toUtf8().constData());
+ 
+     midiWidget->setActiveMidiControllers();
+ 
+-    int err = forceAlsa ? -1 : synthdata->initJack(ncapt, nplay);
++    err = forceAlsa ? -1 : synthdata->initJack(ncapt, nplay, false);
+ 
+     if (err < 0 && !forceJack)
+-        err = synthdata->initAlsa(cname, pname,
+-                fsamp, frsize, nfrags, ncapt, nplay);
++      err = synthdata->initAlsa(cname, pname,
++                                fsamp, frsize, nfrags, ncapt, nplay);
+ 
+     if (err < 0)
+-	exit(err);
++      exit(err);
+ 
+     startSynth();
+-
+-    return 0;
++  }
++  return 0;
+ }
+ 
+ void ModularSynth::displayMidiController()
+diff --git a/src/modularsynth.h b/src/modularsynth.h
+index 18f6bb0..4829a17 100644
+--- a/src/modularsynth.h
++++ b/src/modularsynth.h
+@@ -141,7 +141,7 @@ public:
+ 
+     bool clearConfig(bool restart);
+     QMenu *contextMenu;
+-    int go(bool forceJack, bool forceAlsa);
++    int go(bool forceJack, bool forceAlsa, bool forceJackMidi);
+     void setPaintFast(bool v) {
+       paintFast = v;
+     }
+diff --git a/src/msoptions.h b/src/msoptions.h
+index e5e5ab7..39d44be 100644
+--- a/src/msoptions.h
++++ b/src/msoptions.h
+@@ -27,6 +27,7 @@ struct ModularSynthOptions {
+     bool havePresetPath;
+     bool forceJack;
+     bool forceAlsa;
++    bool forceJackMidi;
+     float edge;
+     int verbose;
+ #ifdef JACK_SESSION
+diff --git a/src/synthdata.cpp b/src/synthdata.cpp
+index 6ecc16d..c73599e 100644
+--- a/src/synthdata.cpp
++++ b/src/synthdata.cpp
+@@ -174,6 +174,14 @@ SynthData::SynthData(QObject* parent, const ModularSynthOptions& mso)
+   colorCable = QColor(180, 180, 180);
+   colorJack = QColor(250, 200, 50);
+ 
++  if (mso.forceJackMidi == true) {
++    readMidiEvents = &SynthData::readJackMidiEvents;
++    withJackMidi = true;
++  } else {
++    readMidiEvents = &SynthData::readAlsaMidiEvents;
++    withJackMidi = false;
++  }
++
+ #ifdef JACK_SESSION
+     jsession_ev = NULL;
+     js_filename = "";
+@@ -514,7 +522,7 @@ void *SynthData::alsa_thr_main (void)
+ 
+ 
+ 
+-int SynthData::initJack (int ncapt, int nplay)
++int SynthData::initJack (int ncapt, int nplay, bool enableMidi)
+ {
+     QString qs;
+ 
+@@ -565,6 +573,18 @@ int SynthData::initJack (int ncapt, int nplay)
+                 JackPortIsInput, 0);
+     }
+ 
++    if (enableMidi) {
++      jackmidi_in = jack_port_register(jack_handle,
++                                       "midi_in", JACK_DEFAULT_MIDI_TYPE,
++                                       JackPortIsInput, 0);
++      jackmidi_out[0] = jack_port_register(jack_handle,
++                                           "midi_out_0", JACK_DEFAULT_MIDI_TYPE,
++                                           JackPortIsOutput, 0);
++      jackmidi_out[1] = jack_port_register(jack_handle,
++                                           "midi_out_1", JACK_DEFAULT_MIDI_TYPE,
++                                           JackPortIsOutput, 0);
++    }
++
+ #ifdef JACK_SESSION
+     /*register jack session callback*/
+     int result = 0;
+@@ -592,6 +612,7 @@ int SynthData::initJack (int ncapt, int nplay)
+     return 0;
+ }
+ 
++
+ int SynthData::closeJack()
+ {
+     if (!jack_handle)
+@@ -680,6 +701,16 @@ int SynthData::jack_static_callback (jack_nframes_t nframes, void *arg)
+     return ((SynthData *) arg)->jack_callback (nframes);
+ }
+ 
++#include <jack/midiport.h>
++void SynthData::clean_jack_midiout(void)
++{
++  void *jack_buffer = NULL;
++
++  jack_buffer = jack_port_get_buffer(jackmidi_out[0], cyclesize);
++  jack_midi_clear_buffer(jack_buffer);
++  jack_buffer = jack_port_get_buffer(jackmidi_out[1], cyclesize);
++  jack_midi_clear_buffer(jack_buffer);
++}
+ 
+ int SynthData::jack_callback(jack_nframes_t nframes)
+ {
+@@ -692,10 +723,10 @@ int SynthData::jack_callback(jack_nframes_t nframes)
+ 
+     pthread_mutex_lock(&rtMutex);
+ 
+-    readAlsaMidiEvents();
+-
+     cyclesize = nframes;
+ 
++    (*this.*readMidiEvents)();
++
+     for (i = 0; i < capt_ports; i += 2) {
+       M_pcmin *C = doSynthesis ? (M_pcmin *)(capt_mods [i / 2]) : 0;
+       if (C)
+@@ -703,6 +734,10 @@ int SynthData::jack_callback(jack_nframes_t nframes)
+ 	  C->pcmdata[j] = (float *)jack_port_get_buffer(jack_in[i + j], nframes);
+     }
+ 
++    if (withJackMidi == true) {
++      clean_jack_midiout();
++    }
++
+     for (i = 0; i < play_ports; i += 2) {
+       M_pcmout *P = doSynthesis ? (M_pcmout *)(play_mods [i >> 1]) : 0;
+       if (P) {
+@@ -723,6 +758,80 @@ int SynthData::jack_callback(jack_nframes_t nframes)
+    return 0;
+ }
+ 
++bool convert_mididata_to_sndev(unsigned char *bufev, snd_seq_event_t *sndev) {
++  unsigned int type = bufev[0] >> 4;
++
++#define buf_to_snd_note(buf, snd) (snd)->data.note.channel = (buf)[0] & 0xF; \
++  (snd)->data.note.note     = (buf)[1];                                 \
++  (snd)->data.note.velocity = (buf)[2]
++#define buf_to_snd_ctrl(buf, snd) (snd)->data.control.channel = (buf)[0] & 0xF; \
++  (snd)->data.control.param = (buf)[1];                                 \
++  (snd)->data.control.value = (buf)[2]
++
++  switch (type)
++    {
++    case 8:                     // NOTE OFF
++      sndev->type = SND_SEQ_EVENT_NOTEOFF;
++      buf_to_snd_note(bufev, sndev);
++      break;
++    case 9:                     // NOTE ON
++      sndev->type = SND_SEQ_EVENT_NOTEON;
++      buf_to_snd_note(bufev, sndev);
++      break;
++    case 10:                    // KEY AFTERTOUCH:
++      sndev->type = SND_SEQ_EVENT_KEYPRESS;
++      buf_to_snd_note(bufev, sndev);
++      break;
++    case 11:                    // CONTROL CHANGE
++      sndev->type = SND_SEQ_EVENT_CONTROLLER;
++      buf_to_snd_ctrl(bufev, sndev);
++      break;
++    case 12:                    // PROGRAM CHANGE
++      sndev->type = SND_SEQ_EVENT_PGMCHANGE;
++      buf_to_snd_ctrl(bufev, sndev);
++      break;
++    case 13:                    // CHANNEL AFTERTOUCH
++      sndev->type = SND_SEQ_EVENT_CHANPRESS;
++      buf_to_snd_ctrl(bufev, sndev);
++      break;
++    case 14:                    // PITCHWHEEL CHANGE
++      sndev->type = SND_SEQ_EVENT_PITCHBEND;
++      buf_to_snd_ctrl(bufev, sndev);
++      break;
++    default:
++      return false;
++    }
++
++  return true;
++}
++
++#include <jack/midiport.h>
++
++void SynthData::readJackMidiEvents(void)
++{
++  void *port_buffer = jack_port_get_buffer(jackmidi_in,
++                                           (jack_nframes_t) cyclesize);
++  jack_nframes_t len = jack_midi_get_event_count(port_buffer), idx = 0;
++  jack_midi_event_t jack_ev;
++  snd_seq_event_t snd_ev;
++
++  while (idx < len) {
++    jack_midi_event_get(&jack_ev, port_buffer, idx);
++    if (convert_mididata_to_sndev(jack_ev.buffer, &snd_ev) == true)
++      processAlsaMidiEvent(&snd_ev);
++    idx++;
++  }
++
++  if (!setAllNotesOff)
++        return;
++
++    setAllNotesOff = false;
++    for (int l2 = 0; l2 < synthdata->poly; ++l2)
++        if (synthdata->noteCounter[l2] < 1000000)
++            synthdata->noteCounter[l2] = 1000000;
++    noteList.reset();
++}
++
+ void SynthData::call_modules(void)
+ {
+   int i;
+diff --git a/src/synthdata.h b/src/synthdata.h
+index 784f8f7..7a155d5 100644
+--- a/src/synthdata.h
++++ b/src/synthdata.h
+@@ -73,6 +73,7 @@ class SynthData: public QObject
+   public:
+     bool withAlsa;
+     bool withJack;
++    bool withJackMidi;
+     float *wave_sine;
+     float *wave_saw;
+     float *wave_saw2;
+@@ -159,13 +160,17 @@ class SynthData: public QObject
+     char pipeMessage;
+     unsigned framesDone;
+     unsigned framesGUIPinged;
++    jack_port_t *jackmidi_in;
++    jack_port_t *jackmidi_out[2];
+ 
+   private:
+     void create_zero_data(void);
+     static void *alsa_static_thr_main(void *arg);
+     static int jack_static_callback(jack_nframes_t nframes, void *arg);
+     void *alsa_thr_main(void);
++    void clean_jack_midiout(void);
+     int  jack_callback(jack_nframes_t nframes);
++    void readJackMidiEvents(void);
+     void call_modules(void);
+     void readAlsaMidiEvents(void);
+     void processAlsaMidiEvent(snd_seq_event_t*);
+@@ -178,6 +183,8 @@ class SynthData: public QObject
+     void handleMidiEventControll14(snd_seq_event_t*);
+     MidiControllerContext* getMidiControllerContext(snd_seq_event_t*);
+ 
++    void (SynthData::*readMidiEvents)(void);
++
+ public:
+   SynthData(QObject* parent, const ModularSynthOptions& mso);
+   void stopPCM();
+@@ -202,7 +209,7 @@ public:
+           unsigned int nfrags, int ncapt, int nplay);
+   int closeAlsa();
+ 
+-  int initJack (int ncapt, int nplay);
++  int initJack (int ncapt, int nplay, bool enableMidi);
+   int closeJack();
+ 
+ #ifdef JACK_SESSION
+diff --git a/src/translations/ams_de.ts b/src/translations/ams_de.ts
+index 018cd2e..8bb27d3 100644
+--- a/src/translations/ams_de.ts
++++ b/src/translations/ams_de.ts
+@@ -4212,48 +4212,48 @@ Save changes?</source>
+         <translation>AlsaModularSynth Parameteransicht</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1504"/>
++        <location filename="../modularsynth.cpp" line="1516"/>
+         <source>Load Colors</source>
+         <translation>Farbscheman laden</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1512"/>
++        <location filename="../modularsynth.cpp" line="1524"/>
+         <source>Could not open file.</source>
+         <translation>Konnte Datei nicht öffnen.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1555"/>
++        <location filename="../modularsynth.cpp" line="1567"/>
+         <source>Save Colors</source>
+         <translation>Farbschema speichern</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1567"/>
++        <location filename="../modularsynth.cpp" line="1579"/>
+         <source>Could not save file.</source>
+         <translation>Konnte Datei nicht speichern.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1667"/>
++        <location filename="../modularsynth.cpp" line="1679"/>
+         <source>Loading LADSPA plugin &quot;%1&quot; from library &quot;%2&quot; failed.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1505"/>
+-        <location filename="../modularsynth.cpp" line="1556"/>
++        <location filename="../modularsynth.cpp" line="1517"/>
++        <location filename="../modularsynth.cpp" line="1568"/>
+         <source>AlsaModularSynth color files</source>
+         <translation>AlsaModularSynth Farbschemadateien</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1672"/>
++        <location filename="../modularsynth.cpp" line="1684"/>
+         <source>Could not find LADSPA plugin &quot;%1&quot; from library &quot;%2&quot;.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1899"/>
++        <location filename="../modularsynth.cpp" line="1911"/>
+         <source>Input port %1 of module %2 is already connected. New connection to module %3 ignored.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2144"/>
++        <location filename="../modularsynth.cpp" line="2156"/>
+         <source>Unknown MIDI controller tag found: %1</source>
+         <translation type="unfinished"></translation>
+     </message>
+@@ -4519,7 +4519,7 @@ Save changes?</source>
+ <context>
+     <name>QObject</name>
+     <message>
+-        <location filename="../main.cpp" line="94"/>
++        <location filename="../main.cpp" line="95"/>
+         <source>Ooops in %1 at %2</source>
+         <translation type="unfinished"></translation>
+     </message>
+@@ -4534,102 +4534,102 @@ Save changes?</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="387"/>
++        <location filename="../modularsynth.cpp" line="399"/>
+         <source>Error opening ALSA sequencer.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="399"/>
++        <location filename="../modularsynth.cpp" line="411"/>
+         <source>Error creating sequencer write port.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="408"/>
++        <location filename="../modularsynth.cpp" line="420"/>
+         <source>Error creating sequencer read port.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1300"/>
++        <location filename="../modularsynth.cpp" line="1312"/>
+         <source>All available output ports are in use</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1325"/>
++        <location filename="../modularsynth.cpp" line="1337"/>
+         <source>All available input ports are in use</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2180"/>
++        <location filename="../modularsynth.cpp" line="2192"/>
+         <source>No title for tab &apos;%1&apos; found.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2196"/>
++        <location filename="../modularsynth.cpp" line="2208"/>
+         <source>No data for frame &apos;%1&apos; found.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2211"/>
++        <location filename="../modularsynth.cpp" line="2223"/>
+         <source>No parameter values found.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2220"/>
++        <location filename="../modularsynth.cpp" line="2232"/>
+         <source>No parameter name &apos;%1&apos; found.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2281"/>
++        <location filename="../modularsynth.cpp" line="2293"/>
+         <source>No name for preset &apos;%1&apos; found.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="420"/>
++        <location filename="../synthdata.cpp" line="428"/>
+         <source>Can&apos;t create ALSA thread with RT priority</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="427"/>
++        <location filename="../synthdata.cpp" line="435"/>
+         <source>Can&apos;t create ALSA thread</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="436"/>
++        <location filename="../synthdata.cpp" line="444"/>
+         <source>Closing ALSA...</source>
+         <translation>Schließe ALSA-Verbindung...</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="543"/>
++        <location filename="../synthdata.cpp" line="551"/>
+         <source>Can&apos;t connect to JACK</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="583"/>
++        <location filename="../synthdata.cpp" line="603"/>
+         <source>Can&apos;t activate JACK</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="601"/>
++        <location filename="../synthdata.cpp" line="622"/>
+         <source>Closing JACK...</source>
+         <translation>Schließe JACK-Verbindung...</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="629"/>
++        <location filename="../synthdata.cpp" line="650"/>
+         <source>No JACK session event set.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../main.cpp" line="71"/>
++        <location filename="../main.cpp" line="72"/>
+         <source>Could not create ams home directory.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../main.cpp" line="102"/>
++        <location filename="../main.cpp" line="103"/>
+         <source>Client name &apos;%1&apos; occupied.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../main.cpp" line="82"/>
++        <location filename="../main.cpp" line="83"/>
+         <source>Failed to open file &apos;%1&apos;</source>
+         <translation>Konnte Datei &apos;%1&apos; nicht öffnen</translation>
+     </message>
+@@ -4644,7 +4644,7 @@ Save changes?</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="335"/>
++        <location filename="../modularsynth.cpp" line="347"/>
+         <source>Alsa MIDI wont work!</source>
+         <translation type="unfinished"></translation>
+     </message>
+diff --git a/src/translations/ams_fr.ts b/src/translations/ams_fr.ts
+index 4135906..36680a7 100644
+--- a/src/translations/ams_fr.ts
++++ b/src/translations/ams_fr.ts
+@@ -4234,48 +4234,48 @@ Save changes?</source>
+         <translation type="obsolete">A propos de</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1504"/>
++        <location filename="../modularsynth.cpp" line="1516"/>
+         <source>Load Colors</source>
+         <translation>Charger les couleurs</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1505"/>
+-        <location filename="../modularsynth.cpp" line="1556"/>
++        <location filename="../modularsynth.cpp" line="1517"/>
++        <location filename="../modularsynth.cpp" line="1568"/>
+         <source>AlsaModularSynth color files</source>
+         <translation>Fichiers couleurs AlsaModularSynth (*.acs)</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1512"/>
++        <location filename="../modularsynth.cpp" line="1524"/>
+         <source>Could not open file.</source>
+         <translation>Echec d&apos;ouverture du fichier.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1555"/>
++        <location filename="../modularsynth.cpp" line="1567"/>
+         <source>Save Colors</source>
+         <translation>Enregistrer les couleurs</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1567"/>
++        <location filename="../modularsynth.cpp" line="1579"/>
+         <source>Could not save file.</source>
+         <translation>Echec d&apos;enregistrement fichier.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1667"/>
++        <location filename="../modularsynth.cpp" line="1679"/>
+         <source>Loading LADSPA plugin &quot;%1&quot; from library &quot;%2&quot; failed.</source>
+         <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1672"/>
++        <location filename="../modularsynth.cpp" line="1684"/>
+         <source>Could not find LADSPA plugin &quot;%1&quot; from library &quot;%2&quot;.</source>
+         <translation>Plugin LADSPA &quot;%1&quot; de la librairie &quot;%2&quot; non trouvé.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1899"/>
++        <location filename="../modularsynth.cpp" line="1911"/>
+         <source>Input port %1 of module %2 is already connected. New connection to module %3 ignored.</source>
+         <translation>Le port d&apos;entrée %1 du module %2 est déjà connecté. Nouvelle connexion au module %3 ignorée.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2144"/>
++        <location filename="../modularsynth.cpp" line="2156"/>
+         <source>Unknown MIDI controller tag found: %1</source>
+         <translation>Controleur MIDI inconnu détecté: %1</translation>
+     </message>
+@@ -4549,22 +4549,22 @@ Save changes?</source>
+ <context>
+     <name>QObject</name>
+     <message>
+-        <location filename="../main.cpp" line="71"/>
++        <location filename="../main.cpp" line="72"/>
+         <source>Could not create ams home directory.</source>
+         <translation>Echec de création du repertoire ams home.</translation>
+     </message>
+     <message>
+-        <location filename="../main.cpp" line="82"/>
++        <location filename="../main.cpp" line="83"/>
+         <source>Failed to open file &apos;%1&apos;</source>
+         <translation>Echec d&apos;ouverture du fichier &apos;%1&apos;</translation>
+     </message>
+     <message>
+-        <location filename="../main.cpp" line="94"/>
++        <location filename="../main.cpp" line="95"/>
+         <source>Ooops in %1 at %2</source>
+         <translation>Ooops dans %1 à %2</translation>
+     </message>
+     <message>
+-        <location filename="../main.cpp" line="102"/>
++        <location filename="../main.cpp" line="103"/>
+         <source>Client name &apos;%1&apos; occupied.</source>
+         <translation>Nom du client &apos;%1&apos; déjà occupé.</translation>
+     </message>
+@@ -4589,92 +4589,92 @@ Save changes?</source>
+         <translation>Echec de déverouillage du fichier de préférences.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="335"/>
++        <location filename="../modularsynth.cpp" line="347"/>
+         <source>Alsa MIDI wont work!</source>
+         <translation>ALSA MIDI ne fonctionnera pas!</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="387"/>
++        <location filename="../modularsynth.cpp" line="399"/>
+         <source>Error opening ALSA sequencer.</source>
+         <translation>Erreur d&apos;ouverture du séquenceur ALSA.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="399"/>
++        <location filename="../modularsynth.cpp" line="411"/>
+         <source>Error creating sequencer write port.</source>
+         <translation>Erreur de création du port d&apos;écriture du séquenceur.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="408"/>
++        <location filename="../modularsynth.cpp" line="420"/>
+         <source>Error creating sequencer read port.</source>
+         <translation>Erreur de création du port de lecture du séquenceur.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1300"/>
++        <location filename="../modularsynth.cpp" line="1312"/>
+         <source>All available output ports are in use</source>
+         <translation>Tous les ports de sortie disponibles sont déjà utilisés</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="1325"/>
++        <location filename="../modularsynth.cpp" line="1337"/>
+         <source>All available input ports are in use</source>
+         <translation>Tous les ports d&apos;entrée disponibles sont déjà utilisés</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2180"/>
++        <location filename="../modularsynth.cpp" line="2192"/>
+         <source>No title for tab &apos;%1&apos; found.</source>
+         <translation>Titre pour l&apos;onglet &apos;%1&apos; introuvable.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2196"/>
++        <location filename="../modularsynth.cpp" line="2208"/>
+         <source>No data for frame &apos;%1&apos; found.</source>
+         <translation>Données pour le cadre &apos;%1&apos; non trouvées.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2211"/>
++        <location filename="../modularsynth.cpp" line="2223"/>
+         <source>No parameter values found.</source>
+         <translation>Valeurs de paramètre introuvables.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2220"/>
++        <location filename="../modularsynth.cpp" line="2232"/>
+         <source>No parameter name &apos;%1&apos; found.</source>
+         <translation>Nom du paramètre &apos;%1&apos; non trouvé.</translation>
+     </message>
+     <message>
+-        <location filename="../modularsynth.cpp" line="2281"/>
++        <location filename="../modularsynth.cpp" line="2293"/>
+         <source>No name for preset &apos;%1&apos; found.</source>
+         <translation>Nom du Preset &apos;%1&apos; non trouvé.</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="420"/>
++        <location filename="../synthdata.cpp" line="428"/>
+         <source>Can&apos;t create ALSA thread with RT priority</source>
+         <translation>Echec d&apos;établir un fil ALSA avec priorité RT</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="427"/>
++        <location filename="../synthdata.cpp" line="435"/>
+         <source>Can&apos;t create ALSA thread</source>
+         <translation>Echec d&apos;établir un fil ALSA</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="436"/>
++        <location filename="../synthdata.cpp" line="444"/>
+         <source>Closing ALSA...</source>
+         <translation>Fermeture d&apos;ALSA...</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="543"/>
++        <location filename="../synthdata.cpp" line="551"/>
+         <source>Can&apos;t connect to JACK</source>
+         <translation>Echec de connexion à JACK</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="583"/>
++        <location filename="../synthdata.cpp" line="603"/>
+         <source>Can&apos;t activate JACK</source>
+         <translation>Echec d&apos;activation de JACK</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="601"/>
++        <location filename="../synthdata.cpp" line="622"/>
+         <source>Closing JACK...</source>
+         <translation>Fermeture de JACK...</translation>
+     </message>
+     <message>
+-        <location filename="../synthdata.cpp" line="629"/>
++        <location filename="../synthdata.cpp" line="650"/>
+         <source>No JACK session event set.</source>
+         <translation>Evênement JACK session non-défini.</translation>
+     </message>
