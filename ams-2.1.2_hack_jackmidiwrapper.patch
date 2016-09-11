@@ -354,7 +354,7 @@ index e5e5ab7..39d44be 100644
      int verbose;
  #ifdef JACK_SESSION
 diff --git a/src/synthdata.cpp b/src/synthdata.cpp
-index 6ecc16d..fe6088d 100644
+index 6ecc16d..c91633e 100644
 --- a/src/synthdata.cpp
 +++ b/src/synthdata.cpp
 @@ -174,6 +174,14 @@ SynthData::SynthData(QObject* parent, const ModularSynthOptions& mso)
@@ -449,7 +449,7 @@ index 6ecc16d..fe6088d 100644
      for (i = 0; i < play_ports; i += 2) {
        M_pcmout *P = doSynthesis ? (M_pcmout *)(play_mods [i >> 1]) : 0;
        if (P) {
-@@ -723,6 +758,84 @@ int SynthData::jack_callback(jack_nframes_t nframes)
+@@ -723,6 +758,83 @@ int SynthData::jack_callback(jack_nframes_t nframes)
     return 0;
  }
  
@@ -463,7 +463,7 @@ index 6ecc16d..fe6088d 100644
 +  (snd)->data.control.param = (buf)[1];                                 \
 +  (snd)->data.control.value = (buf)[2]
 +#define buf_to_snd_pitch(buf, snd) (snd)->data.control.channel = (buf)[0] & 0xF; \
-+  (snd)->data.control.param = 0;																				\
++  (snd)->data.control.param = 0;                                        \
 +  (snd)->data.control.value = ((buf)[2] << 7) + (buf)[1] - 8192
 +
 +  switch (type)
@@ -495,7 +495,6 @@ index 6ecc16d..fe6088d 100644
 +    case 14:                    // PITCHWHEEL CHANGE
 +      sndev->type = SND_SEQ_EVENT_PITCHBEND;
 +      buf_to_snd_pitch(bufev, sndev);
-+			printf("Here => %d %d %d\n", bufev[1], bufev[2], sndev->data.control.value);
 +      break;
 +    default:
 +      return false;
