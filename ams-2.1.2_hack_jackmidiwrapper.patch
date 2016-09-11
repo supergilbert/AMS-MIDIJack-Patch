@@ -1,3 +1,25 @@
+diff --git a/configure b/configure
+index eb3762b..fab53c9 100755
+--- a/configure
++++ b/configure
+@@ -6331,7 +6331,7 @@ if ${ac_cv_lib_QtOpenGL_main+:} false; then :
+   $as_echo_n "(cached) " >&6
+ else
+   ac_check_lib_save_LIBS=$LIBS
+-LIBS="-lQtOpenGL  $LIBS"
++LIBS=" -lQtOpenGL  $LIBS"
+ cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+ /* end confdefs.h.  */
+ 
+@@ -6360,7 +6360,7 @@ if test "x$ac_cv_lib_QtOpenGL_main" = xyes; then :
+ #define HAVE_LIBQTOPENGL 1
+ _ACEOF
+ 
+-  LIBS="-lQtOpenGL $LIBS"
++  LIBS=" -lQtOpenGL $LIBS"
+ 
+ else
+   as_fn_error $? "QtOpenGL is required" "$LINENO" 5
 diff --git a/src/m_midiout.cpp b/src/m_midiout.cpp
 index 4b505ea..aa1fef1 100644
 --- a/src/m_midiout.cpp
@@ -232,10 +254,10 @@ index d485efc..8bdac10 100644
    }
  
 diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
-index 8955e1d..9ba4245 100644
+index 9a2db8c..661c652 100644
 --- a/src/mainwindow.cpp
 +++ b/src/mainwindow.cpp
-@@ -340,7 +340,7 @@ MainWindow::MainWindow(const ModularSynthOptions& mso)
+@@ -349,7 +349,7 @@ MainWindow::MainWindow(const ModularSynthOptions& mso): QMainWindow(),
                      .toUtf8().constData());
          modularSynth->setPatchPath(mso.presetPath);
      }
@@ -244,7 +266,7 @@ index 8955e1d..9ba4245 100644
  
  #ifdef NSM_SUPPORT
      const char *nsm_url = getenv("NSM_URL");
-@@ -975,7 +975,7 @@ int MainWindow::nsm_open(const char *name, const char *display_name,
+@@ -984,7 +984,7 @@ int MainWindow::nsm_open(const char *name, const char *display_name,
  
      synthdata->closeJack();
      synthdata->name = client_id;
@@ -254,7 +276,7 @@ index 8955e1d..9ba4245 100644
      configFile.append(".ams");
      nsmOpenFile(configFile);
 diff --git a/src/modularsynth.cpp b/src/modularsynth.cpp
-index a1b1387..979ff89 100644
+index 01991b5..77932da 100644
 --- a/src/modularsynth.cpp
 +++ b/src/modularsynth.cpp
 @@ -327,27 +327,39 @@ void ModularSynth::mouseReleaseEvent(QMouseEvent *ev)
@@ -332,7 +354,7 @@ index e5e5ab7..39d44be 100644
      int verbose;
  #ifdef JACK_SESSION
 diff --git a/src/synthdata.cpp b/src/synthdata.cpp
-index 6ecc16d..c73599e 100644
+index 6ecc16d..fe6088d 100644
 --- a/src/synthdata.cpp
 +++ b/src/synthdata.cpp
 @@ -174,6 +174,14 @@ SynthData::SynthData(QObject* parent, const ModularSynthOptions& mso)
@@ -427,7 +449,7 @@ index 6ecc16d..c73599e 100644
      for (i = 0; i < play_ports; i += 2) {
        M_pcmout *P = doSynthesis ? (M_pcmout *)(play_mods [i >> 1]) : 0;
        if (P) {
-@@ -723,6 +758,80 @@ int SynthData::jack_callback(jack_nframes_t nframes)
+@@ -723,6 +758,84 @@ int SynthData::jack_callback(jack_nframes_t nframes)
     return 0;
  }
  
@@ -440,6 +462,9 @@ index 6ecc16d..c73599e 100644
 +#define buf_to_snd_ctrl(buf, snd) (snd)->data.control.channel = (buf)[0] & 0xF; \
 +  (snd)->data.control.param = (buf)[1];                                 \
 +  (snd)->data.control.value = (buf)[2]
++#define buf_to_snd_pitch(buf, snd) (snd)->data.control.channel = (buf)[0] & 0xF; \
++  (snd)->data.control.param = 0;																				\
++  (snd)->data.control.value = ((buf)[2] << 7) + (buf)[1] - 8192
 +
 +  switch (type)
 +    {
@@ -469,7 +494,8 @@ index 6ecc16d..c73599e 100644
 +      break;
 +    case 14:                    // PITCHWHEEL CHANGE
 +      sndev->type = SND_SEQ_EVENT_PITCHBEND;
-+      buf_to_snd_ctrl(bufev, sndev);
++      buf_to_snd_pitch(bufev, sndev);
++			printf("Here => %d %d %d\n", bufev[1], bufev[2], sndev->data.control.value);
 +      break;
 +    default:
 +      return false;
@@ -557,10 +583,10 @@ index 784f8f7..7a155d5 100644
  
  #ifdef JACK_SESSION
 diff --git a/src/translations/ams_de.ts b/src/translations/ams_de.ts
-index 018cd2e..8bb27d3 100644
+index 6c26205..c2f685f 100644
 --- a/src/translations/ams_de.ts
 +++ b/src/translations/ams_de.ts
-@@ -4212,48 +4212,48 @@ Save changes?</source>
+@@ -4217,48 +4217,48 @@ Save changes?</source>
          <translation>AlsaModularSynth Parameteransicht</translation>
      </message>
      <message>
@@ -619,7 +645,7 @@ index 018cd2e..8bb27d3 100644
          <source>Unknown MIDI controller tag found: %1</source>
          <translation type="unfinished"></translation>
      </message>
-@@ -4519,7 +4519,7 @@ Save changes?</source>
+@@ -4524,7 +4524,7 @@ Save changes?</source>
  <context>
      <name>QObject</name>
      <message>
@@ -628,7 +654,7 @@ index 018cd2e..8bb27d3 100644
          <source>Ooops in %1 at %2</source>
          <translation type="unfinished"></translation>
      </message>
-@@ -4534,102 +4534,102 @@ Save changes?</source>
+@@ -4539,102 +4539,102 @@ Save changes?</source>
          <translation type="unfinished"></translation>
      </message>
      <message>
@@ -751,7 +777,7 @@ index 018cd2e..8bb27d3 100644
          <source>Failed to open file &apos;%1&apos;</source>
          <translation>Konnte Datei &apos;%1&apos; nicht öffnen</translation>
      </message>
-@@ -4644,7 +4644,7 @@ Save changes?</source>
+@@ -4649,7 +4649,7 @@ Save changes?</source>
          <translation type="unfinished"></translation>
      </message>
      <message>
@@ -761,10 +787,10 @@ index 018cd2e..8bb27d3 100644
          <translation type="unfinished"></translation>
      </message>
 diff --git a/src/translations/ams_fr.ts b/src/translations/ams_fr.ts
-index 4135906..36680a7 100644
+index 079cb8a..3d1c800 100644
 --- a/src/translations/ams_fr.ts
 +++ b/src/translations/ams_fr.ts
-@@ -4234,48 +4234,48 @@ Save changes?</source>
+@@ -4239,48 +4239,48 @@ Save changes?</source>
          <translation type="obsolete">A propos de</translation>
      </message>
      <message>
@@ -823,7 +849,7 @@ index 4135906..36680a7 100644
          <source>Unknown MIDI controller tag found: %1</source>
          <translation>Controleur MIDI inconnu détecté: %1</translation>
      </message>
-@@ -4549,22 +4549,22 @@ Save changes?</source>
+@@ -4554,22 +4554,22 @@ Save changes?</source>
  <context>
      <name>QObject</name>
      <message>
@@ -850,7 +876,7 @@ index 4135906..36680a7 100644
          <source>Client name &apos;%1&apos; occupied.</source>
          <translation>Nom du client &apos;%1&apos; déjà occupé.</translation>
      </message>
-@@ -4589,92 +4589,92 @@ Save changes?</source>
+@@ -4594,92 +4594,92 @@ Save changes?</source>
          <translation>Echec de déverouillage du fichier de préférences.</translation>
      </message>
      <message>
